@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Run Tracker - Pace & Timer</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap');
+  body {
+    margin:0; padding:0; font-family: 'Montserrat', sans-serif;
+    background: linear-gradient(135deg, #1f4037, #99f2c8);
+    color: #fff;
+    min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+  }
+  header {
+    margin: 30px 0 10px;
+    font-size: 2.4rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-shadow: 0 0 10px rgba(0,0,0,0.3);
+  }
+  main {
+    background: rgba(255 255 255 / 0.15);
+    border-radius: 15px;
+    padding: 25px 30px;
+    width: 90vw;
+    max-width: 400px;
+    box-shadow: 0 0 20px rgba(0,0,0,0.3);
+  }
+  .info-box {
+    display: flex; justify-content: space-between;
+    font-size: 1.5rem;
+    margin-bottom: 15px;
+  }
+  .info-box span {
+    font-weight: 700;
+  }
+  #pace {
+    color: #ffdd57;
+  }
+  #timer {
+    color: #4ade80;
+  }
+  button {
+    width: 100%;
+    background: #16a34a;
+    border: none;
+    border-radius: 10px;
+    padding: 15px;
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #fff;
+    cursor: pointer;
+    margin: 10px 0 5px;
+    box-shadow: 0 5px 15px #0f6e34;
+    transition: background 0.3s ease;
+  }
+  button:disabled {
+    background: #555;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+  button:hover:not(:disabled) {
+    background: #22c55e;
+  }
+  #historyList {
+    margin-top: 20px;
+    max-height: 160px;
+    overflow-y: auto;
+    background: rgba(255 255 255 / 0.1);
+    border-radius: 10px;
+    padding: 10px;
+  }
+  #historyList h3 {
+    margin: 0 0 10px;
+    font-size: 1.3rem;
+  }
+  .history-item {
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(255 255 255 / 0.2);
+    font-size: 1rem;
+    display: flex; justify-content: space-between;
+  }
+  .history-item:last-child {
+    border-bottom: none;
+  }
+  #clearHistory {
+    background: #dc2626;
+    margin-top: 10px;
+  }
+  /* Popup */
+  #popup {
+    position: fixed;
+    top:0; left:0; right:0; bottom:0;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    z-index: 10;
+  }
+  #popup.active {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  #popup .content {
+    background: #111;
+    padding: 25px 30px;
+    border-radius: 15px;
+    max-width: 320px;
+    text-align: center;
+    box-shadow: 0 0 15px #ff4d6d;
+  }
+  #popup .content h2 {
+    margin: 0 0 15px;
+    color: #ff4d6d;
+    font-size: 1.8rem;
+  }
+  #popup .content p {
+    margin: 0 0 20px;
+    font-size: 1.1rem;
+  }
+  #popup button {
+    width: auto;
+    background: #ff4d6d;
+    box-shadow: 0 5px 15px #b33347;
+  }
+</style>
+</head>
+<body>
+
+<header>Run Tracker</header>
+<main>
+  <div class="info-box">
+    <div>Timer: <span id="timer">00:00:00</span></div>
+    <div>Pace: <span id="pace">0'00'' /km</span></div>
+  </div>
+  <button id="startBtn">Start</button>
+  <button id="stopBtn" disabled>Stop</button>
+
+  <div id="historyList" style="display:none;">
+    <h3>Riwayat Lari</h3>
+    <div id="historyItems"></div>
+    <button id="clearHistory">Hapus Riwayat</button>
+  </div>
+</main>
+
+<!-- Popup GPS -->
+<div id="popup">
+  <div class="content">
+    <h2>GPS Tidak Aktif</h2>
+    <p>Mohon aktifkan GPS dan izinkan akses lokasi pada browser Anda untuk mulai tracking.</p>
+    <button id="popupCloseBtn">Tutup</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  // Elements
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const timerEl = document.getElementById('timer');
+  const paceEl = document.getElementById('pace');
+  const popup = document.getElementById('popup');
+  const popupCloseBtn = document.getElementById('popupCloseBtn');
+  const historyList = document.getElementById('historyList');
+  const historyItems = document.getElementById('historyItems');
+  const clearHistoryBtn = document.getElementById('clearHistory');
+
+  // State
+  let watchId = null;
+  let tracking = false;
+  let timerInterval = null;
+  let startTime = null;
+  let elapsedSeconds = 0;
+  let distanceMeters = 0;
+  let lastPos = null;
+  let pace = 0; // seconds per km
+
+  // Helpers
+  function formatTime(s) {
+    const h = Math.floor(s / 3600).toString().padStart(2,'0');
+    const m = Math.floor((s % 3600) / 60).toString().padStart(2,'0');
+    const sec = (s % 60).toString().padStart(2,'0');
+    return `${h}:${m}:${sec}`;
+  }
+  function formatPace(secPerKm) {
+    if (secPerKm === 0 || !secPerKm || !isFinite(secPerKm)) return "0'00'' /km";
+    const m = Math.floor(secPerKm / 60);
+    const s = Math.floor(secPerKm % 60);
+    return `${m}'${s.toString().padStart(2,'0')}'' /km`;
+  }
+  // Haversine formula to calc distance between 2 coords in meters
+  function getDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371e3; // meters
+    const φ1 = lat1 * Math.PI/180;
+    const φ2 = lat2 * Math.PI/180;
+    const Δφ = (lat2-lat1)*Math.PI/180;
+    const Δλ = (lon2-lon1)*Math.PI/180;
+
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+              Math.cos(φ1) * Math.cos(φ2) *
+              Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+    return R * c; // in meters
+  }
+
+  // LocalStorage: Save and Load History
+  function saveRun(run) {
+    const runs = JSON.parse(localStorage.getItem('runHistory') || '[]');
+    runs.unshift(run);
+    localStorage.setItem('runHistory', JSON.stringify(runs));
+  }
+  function loadHistory() {
+    const runs = JSON.parse(localStorage.getItem('runHistory') || '[]');
+    return runs;
+  }
+  function renderHistory() {
+    const runs = loadHistory();
+    if (runs.length === 0) {
+      historyList.style.display = 'none';
+      return;
+    }
+    historyList.style.display = 'block';
+    historyItems.innerHTML = '';
+    runs.forEach((run, i) => {
+      const div = document.createElement('div');
+      div.className = 'history-item';
+      div.textContent = `#${runs.length - i} | Waktu: ${run.time} | Jarak: ${(run.distance/1000).toFixed(2)} km | Pace: ${formatPace(run.pace)}`;
+      historyItems.appendChild(div);
+    });
+  }
+  function clearHistory() {
+    localStorage.removeItem('runHistory');
+    renderHistory();
+  }
+
+  // Popup control
+  function showPopup() {
+    popup.classList.add('active');
+  }
+  function hidePopup() {
+    popup.classList.remove('active');
+  }
+  popupCloseBtn.onclick = hidePopup;
+
+  // Timer update
+  function startTimer() {
+    startTime = Date.now();
+    timerInterval = setInterval(() => {
+      elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+      timerEl.textContent = formatTime(elapsedSeconds);
+      // update pace display realtime
+      if (distanceMeters > 0) {
+        pace = elapsedSeconds / (distanceMeters / 1000);
+        paceEl.textContent = formatPace(pace);
+      } else {
+        paceEl.textContent = "0'00'' /km";
+      }
+    }, 1000);
+  }
+  function stopTimer() {
+    clearInterval(timerInterval);
+  }
+
+  // Start tracking
+  function startTracking() {
+    if (!navigator.geolocation) {
+      alert('Browser Anda tidak mendukung GPS');
+      return;
+    }
+
+    tracking = true;
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    distanceMeters = 0;
+    lastPos = null;
+    pace = 0;
+    timerEl.textContent = '00:00:00';
+    paceEl.textContent = "0'00'' /km";
+
+    startTimer();
+
+    watchId = navigator.geolocation.watchPosition(
+      pos => {
+        // kalau GPS aktif, sembunyikan popup jika muncul
+        if (popup.classList.contains('active')) {
+          hidePopup();
+        }
+        const {latitude, longitude} = pos.coords;
+
+        if (lastPos) {
+          const d = getDistance(lastPos.latitude, lastPos.longitude, latitude, longitude);
+          if (d > 1) { // supaya gak kebanyakan noise kecil
+            distanceMeters += d;
+          }
+        }
+        lastPos = {latitude, longitude};
+      },
+      err => {
+        if (err.code === 1) { // PERMISSION_DENIED
+          showPopup();
+          stopTracking();
+        } else {
+          alert("Error GPS: " + err.message);
+          stopTracking();
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
+    );
+  }
+
+  // Stop tracking
+  function stopTracking() {
+    if (!tracking) return;
+    tracking = false;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    stopTimer();
+
+    if (watchId !== null) {
+      navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+    }
+
+    if (elapsedSeconds > 0) {
+      // Save run
+      saveRun({
+        time: formatTime(elapsedSeconds),
+        distance: distanceMeters,
+        pace: pace
+      });
+      renderHistory();
+    }
+  }
+
+  // Event Listeners
+  startBtn.onclick = () => {
+    startTracking();
+  };
+  stopBtn.onclick = () => {
+    stopTracking();
+  };
+  clearHistoryBtn.onclick = () => {
+    if (confirm("Yakin hapus semua riwayat lari?")) {
+      clearHistory();
+    }
+  };
+
+  // Load history saat awal buka halaman
+  renderHistory();
+
+})();
+</script>
+
+</body>
+</html>
